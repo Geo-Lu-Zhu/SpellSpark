@@ -157,15 +157,47 @@ const speakWord = (word) => {
   window.speechSynthesis.speak(utterance);
 };
 
+const playApplause = () => {
+  const audio = new Audio('/applause.mp3'); 
+  audio.volume = 0.5; 
+  
+  audio.play().catch(e => console.log("Audio play blocked by browser:", e));
+
+  // Stop the audio after 3000 milliseconds (3 seconds)
+  setTimeout(() => {
+    audio.pause();           // Stop the playback
+    audio.currentTime = 0;   // Rewind back to the very beginning
+  }, 3000);
+};
+
+const playMoo = () => {
+  const audio = new Audio('/moo.wav');
+  audio.volume = 0.6; 
+  
+  audio.play().catch(e => console.log("Audio play blocked by browser:", e));
+
+  // Stop the audio after 3000 milliseconds (3 seconds)
+  setTimeout(() => {
+    audio.pause();           // Stop the playback
+    audio.currentTime = 0;   // Rewind back to the very beginning
+  }, 3000);
+};
+
 const checkSpelling = () => {
   if (!userInput.value) return;
   isAnimating.value = true; 
 
   if (userInput.value.toLowerCase().trim() === currentWord.value.toLowerCase()) {
+    // Correct Answer
     showSuccess.value = true;
+    playApplause(); // Play the applause sound
+    
     setTimeout(nextWord, 3000);
   } else {
+    // Wrong Answer
     showFailure.value = true;
+    playMoo(); // Play the cow moo sound
+    
     setTimeout(nextWord, 5000); 
   }
 };
