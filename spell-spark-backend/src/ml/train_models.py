@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+import sys
+from datetime import datetime
 from pathlib import Path
 
 import joblib
@@ -25,8 +28,8 @@ DATA_CANDIDATES = [
     REPO_ROOT / "data" / "final_pairs_with_error_labels_WIP_for_INSPECTIONs.xlsx",
     BACKEND_ROOT / "data" / "final_pairs_with_error_labels_WIP_for_INSPECTIONs.xlsx",
 ]
-MODEL_DIR = BACKEND_ROOT / "models"
-MODEL_DIR.mkdir(parents=True, exist_ok=True)
+MODEL_ROOT = BACKEND_ROOT / "models"
+MODEL_ROOT.mkdir(parents=True, exist_ok=True)
 
 RANDOM_STATE = 42
 BATCH_SIZE = 32
@@ -44,15 +47,35 @@ def resolve_data_path() -> Path:
     )
 
 
-def load_dataset() -> pd.DataFrame:
+def setup_run_logger(run_dir: Path) -> logging.Logger:
+    """Create a logger that writes to both console and a per-run file."""
+    logger = logging.getLogger("spell_spark_training")
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    logger.propagate = False
+
+    formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
+
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    file_handler = logging.FileHandler(run_dir / "train.log", encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    return logger
+
+
+def load_dataset(logger: logging.Logger) -> pd.DataFrame:
     """Load the Excel dataset into a DataFrame."""
     data_path = resolve_data_path()
-    print(f"Loading dataset from {data_path}...")
+    logger.info("Loading dataset from %s...", data_path)
     if data_path.suffix.lower() in {".xlsx", ".xls"}:
         df = pd.read_excel(data_path)
     else:
         df = pd.read_csv(data_path)
-    print("Data loaded successfully. Shape:", df.shape)
+    logger.info("Data loaded successfully. Shape: %s", df.shape)
     return df
 
 
@@ -318,8 +341,14 @@ def get_student_hard_predictions(model, loader, device):
 
 def main():
     """Train teacher (model 1), distill soft profiles, then train student (model 2)."""
-    print("Loading and preprocessing data...")
-    df = load_dataset()
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = MODEL_ROOT / f"run_{run_id}"
+    run_dir.mkdir(parents=True, exist_ok=False)
+
+    logger = setup_run_logger(run_dir)
+    logger.info("Run directory: %s", run_dir)
+    logger.info("Loading and preprocessing data...")
+    df = load_dataset(logger)
     validate_required_columns(df)
 
     df = df[["correct", "incorrect", "error_type"]].dropna().copy()
@@ -332,7 +361,7 @@ def main():
     pairs = list(zip(df["correct"], df["incorrect"]))
 
     tokenizer = build_tokenizer_from_pairs(pairs)
-    print(f"Tokenizer vocabulary size: {tokenizer.vocab_size}")
+    logger.info("Tokenizer vocabulary size: %d", tokenizer.vocab_size)
 
     train_pairs, val_pairs, train_labels, val_labels = train_test_split(
         pairs,
@@ -360,8 +389,9 @@ def main():
 
     num_classes = len(label_encoder.classes_)
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    logger.info("Using device: %s", device)
 
-    print("Training Model 1 (BiLSTM teacher)...")
+    logger.info("Training Model 1 (BiLSTM teacher)...")
     model1 = Model1_BiLSTM(vocab_size=tokenizer.vocab_size, num_classes=num_classes).to(device)
     optimizer1 = optim.Adam(model1.parameters(), lr=LEARNING_RATE)
     scheduler1 = optim.lr_scheduler.ReduceLROnPlateau(optimizer1, patience=3, factor=0.5)
@@ -370,19 +400,22 @@ def main():
         tr_loss, tr_acc = train_classifier_epoch(model1, train_pair_loader, optimizer1, device)
         vl_loss, vl_acc = evaluate_classifier(model1, val_pair_loader, device)
         scheduler1.step(vl_loss)
-        print(
-            f"Model1 Epoch {epoch:3d} | "
-            f"train loss/acc {tr_loss:.4f} / {tr_acc:.3f} | "
-            f"val loss/acc {vl_loss:.4f} / {vl_acc:.3f}"
+        logger.info(
+            "Model1 Epoch %3d | train loss/acc %.4f / %.3f | val loss/acc %.4f / %.3f",
+            epoch,
+            tr_loss,
+            tr_acc,
+            vl_loss,
+            vl_acc,
         )
 
     m1_true_labels, m1_pred_labels = get_hard_predictions(model1, val_pair_loader, device)
-    print("\nModel 1 classification report")
-    print(classification_report(m1_true_labels, m1_pred_labels, target_names=label_encoder.classes_))
-    print("Model 1 validation accuracy:", accuracy_score(m1_true_labels, m1_pred_labels))
-    torch.save(model1.state_dict(), MODEL_DIR / "model1_bilstm.pth")
+    m1_report = classification_report(m1_true_labels, m1_pred_labels, target_names=label_encoder.classes_)
+    logger.info("\nModel 1 classification report\n%s", m1_report)
+    logger.info("Model 1 validation accuracy: %.6f", accuracy_score(m1_true_labels, m1_pred_labels))
+    torch.save(model1.state_dict(), run_dir / "model1_bilstm.pth")
 
-    print("\nGenerating teacher soft profiles for full split dataset...")
+    logger.info("\nGenerating teacher soft profiles for full split dataset...")
     train_soft_profiles = generate_teacher_profiles(model1, train_pair_dataset, device)
     val_soft_profiles = generate_teacher_profiles(model1, val_pair_dataset, device)
 
@@ -405,7 +438,7 @@ def main():
         collate_fn=collate_word_profiles,
     )
 
-    print("Training Model 2 (Char-CNN student with KL divergence)...")
+    logger.info("Training Model 2 (Char-CNN student with KL divergence)...")
     model2 = Model2_CharCNN(vocab_size=tokenizer.vocab_size, num_classes=num_classes).to(device)
     optimizer2 = optim.Adam(model2.parameters(), lr=LEARNING_RATE)
     scheduler2 = optim.lr_scheduler.ReduceLROnPlateau(optimizer2, patience=3, factor=0.5)
@@ -414,20 +447,27 @@ def main():
         tr_loss, tr_acc, tr_cos = train_student_epoch(model2, train_word_loader, optimizer2, device)
         vl_loss, vl_acc, vl_cos = evaluate_student(model2, val_word_loader, device)
         scheduler2.step(vl_loss)
-        print(
-            f"Model2 Epoch {epoch:3d} | "
-            f"train KL/acc/cos {tr_loss:.4f} / {tr_acc:.3f} / {tr_cos:.3f} | "
-            f"val KL/acc/cos {vl_loss:.4f} / {vl_acc:.3f} / {vl_cos:.3f}"
+        logger.info(
+            "Model2 Epoch %3d | train KL/acc/cos %.4f / %.3f / %.3f | val KL/acc/cos %.4f / %.3f / %.3f",
+            epoch,
+            tr_loss,
+            tr_acc,
+            tr_cos,
+            vl_loss,
+            vl_acc,
+            vl_cos,
         )
 
     m2_target_hard, m2_pred_hard = get_student_hard_predictions(model2, val_word_loader, device)
-    print("\nModel 2 classification report (argmax target profile vs argmax prediction)")
-    print(classification_report(m2_target_hard, m2_pred_hard, target_names=label_encoder.classes_))
-    print("Model 2 hard validation accuracy:", accuracy_score(m2_target_hard, m2_pred_hard))
-    torch.save(model2.state_dict(), MODEL_DIR / "model2_cnn.pth")
+    m2_report = classification_report(m2_target_hard, m2_pred_hard, target_names=label_encoder.classes_)
+    logger.info("\nModel 2 classification report (argmax target profile vs argmax prediction)\n%s", m2_report)
+    logger.info("Model 2 hard validation accuracy: %.6f", accuracy_score(m2_target_hard, m2_pred_hard))
+    torch.save(model2.state_dict(), run_dir / "model2_cnn.pth")
 
-    joblib.dump(tokenizer, MODEL_DIR / "char_tokenizer.joblib")
-    joblib.dump(label_encoder, MODEL_DIR / "label_encoder.joblib")
+    joblib.dump(tokenizer, run_dir / "char_tokenizer.joblib")
+    joblib.dump(label_encoder, run_dir / "label_encoder.joblib")
+    logger.info("Saved artifacts: model1_bilstm.pth, model2_cnn.pth, char_tokenizer.joblib, label_encoder.joblib")
+    logger.info("Training log saved to %s", run_dir / "train.log")
 
 
 if __name__ == "__main__":
