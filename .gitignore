@@ -3,3 +3,4 @@
 /spell-spark-ui/package-lock.json
 /.venv
 __pycache__/
+/spell-spark-backend/models/*
