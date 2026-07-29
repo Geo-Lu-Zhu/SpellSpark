@@ -28,6 +28,11 @@ DATA_CANDIDATES = [
 MODEL_DIR = BACKEND_ROOT / "models"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
+RANDOM_STATE = 42
+BATCH_SIZE = 32
+NUM_EPOCHS = 30
+LEARNING_RATE = 1e-3
+
 
 def resolve_data_path() -> Path:
     """Return the first existing dataset path."""
@@ -59,17 +64,10 @@ def validate_required_columns(df: pd.DataFrame) -> None:
         raise KeyError(f"Missing required columns: {missing_columns}")
 
 
-def collate_sequences(batch):
-    """Pad a batch of variable-length token sequences."""
-    sequences, labels = zip(*batch)
-    max_len = max(len(sequence) for sequence in sequences)
-    padded = [sequence + [PAD_IDX] * (max_len - len(sequence)) for sequence in sequences]
-    return torch.tensor(padded, dtype=torch.long), torch.tensor(labels, dtype=torch.long)
-
-
 class PairSequenceDataset(Dataset):
+    """Pair inputs for Model 1: (correct, incorrect) -> hard class label."""
+
     def __init__(self, pairs, labels, tokenizer: CharTokenizer):
-        """Store tokenized word pairs and labels."""
         self.sequences = [tokenizer.encode_pair(correct, incorrect) for correct, incorrect in pairs]
         self.labels = list(labels)
 
@@ -78,6 +76,36 @@ class PairSequenceDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.sequences[idx], self.labels[idx]
+
+
+class WordProfileDataset(Dataset):
+    """Word inputs for Model 2: correct_word -> teacher soft class distribution."""
+
+    def __init__(self, words, profiles, tokenizer: CharTokenizer):
+        self.sequences = [tokenizer.encode(word) for word in words]
+        self.profiles = list(profiles)
+
+    def __len__(self):
+        return len(self.profiles)
+
+    def __getitem__(self, idx):
+        return self.sequences[idx], self.profiles[idx]
+
+
+def collate_pair_sequences(batch):
+    """Pad tokenized pair sequences and return hard labels."""
+    sequences, labels = zip(*batch)
+    max_len = max(len(sequence) for sequence in sequences)
+    padded = [sequence + [PAD_IDX] * (max_len - len(sequence)) for sequence in sequences]
+    return torch.tensor(padded, dtype=torch.long), torch.tensor(labels, dtype=torch.long)
+
+
+def collate_word_profiles(batch):
+    """Pad tokenized words and return soft-profile targets."""
+    sequences, profiles = zip(*batch)
+    max_len = max(len(sequence) for sequence in sequences)
+    padded = [sequence + [PAD_IDX] * (max_len - len(sequence)) for sequence in sequences]
+    return torch.tensor(padded, dtype=torch.long), torch.tensor(profiles, dtype=torch.float32)
 
 
 class Model1_BiLSTM(nn.Module):
@@ -135,8 +163,8 @@ class Model2_CharCNN(nn.Module):
         return self.fc2(h)
 
 
-def train_epoch(model, loader, optimizer, device):
-    """Train one epoch and return loss and accuracy."""
+def train_classifier_epoch(model, loader, optimizer, device):
+    """Train one epoch for hard-label classification (Model 1)."""
     model.train()
     total_loss, correct, total = 0.0, 0, 0
 
@@ -159,8 +187,8 @@ def train_epoch(model, loader, optimizer, device):
 
 
 @torch.no_grad()
-def evaluate(model, loader, device):
-    """Evaluate a model and return loss and accuracy."""
+def evaluate_classifier(model, loader, device):
+    """Evaluate one epoch for hard-label classification (Model 1)."""
     model.eval()
     total_loss, correct, total = 0.0, 0, 0
 
@@ -178,8 +206,8 @@ def evaluate(model, loader, device):
 
 
 @torch.no_grad()
-def get_predictions(model, loader, device):
-    """Collect labels and predictions for a loader."""
+def get_hard_predictions(model, loader, device):
+    """Collect hard labels and hard predictions for a loader."""
     model.eval()
     all_preds = []
     all_labels = []
@@ -194,11 +222,104 @@ def get_predictions(model, loader, device):
     return all_labels, all_preds
 
 
+@torch.no_grad()
+def generate_teacher_profiles(model, dataset, device):
+    """Generate teacher probability distributions for every example in a dataset."""
+    model.eval()
+    loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn=collate_pair_sequences)
+    all_profiles = []
+
+    for x_batch, _ in loader:
+        x_batch = x_batch.to(device)
+        probs = F.softmax(model(x_batch), dim=1)
+        all_profiles.extend(probs.cpu().tolist())
+
+    return all_profiles
+
+
+def train_student_epoch(model, loader, optimizer, device):
+    """Train one epoch for soft-label distillation (Model 2)."""
+    model.train()
+    total_loss, total, correct = 0.0, 0, 0
+    cosine_sum = 0.0
+
+    for x_batch, target_profiles in loader:
+        x_batch = x_batch.to(device)
+        target_profiles = target_profiles.to(device)
+
+        logits = model(x_batch)
+        log_probs = F.log_softmax(logits, dim=1)
+        pred_profiles = log_probs.exp()
+
+        loss = F.kl_div(log_probs, target_profiles, reduction="batchmean")
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        batch_size = target_profiles.size(0)
+        total_loss += loss.item() * batch_size
+        cosine_sum += F.cosine_similarity(pred_profiles, target_profiles, dim=1).sum().item()
+
+        pred_hard = logits.argmax(dim=1)
+        target_hard = target_profiles.argmax(dim=1)
+        correct += (pred_hard == target_hard).sum().item()
+        total += batch_size
+
+    return total_loss / total, correct / total, cosine_sum / total
+
+
+@torch.no_grad()
+def evaluate_student(model, loader, device):
+    """Evaluate one epoch for soft-label distillation (Model 2)."""
+    model.eval()
+    total_loss, total, correct = 0.0, 0, 0
+    cosine_sum = 0.0
+
+    for x_batch, target_profiles in loader:
+        x_batch = x_batch.to(device)
+        target_profiles = target_profiles.to(device)
+
+        logits = model(x_batch)
+        log_probs = F.log_softmax(logits, dim=1)
+        pred_profiles = log_probs.exp()
+
+        loss = F.kl_div(log_probs, target_profiles, reduction="batchmean")
+
+        batch_size = target_profiles.size(0)
+        total_loss += loss.item() * batch_size
+        cosine_sum += F.cosine_similarity(pred_profiles, target_profiles, dim=1).sum().item()
+
+        pred_hard = logits.argmax(dim=1)
+        target_hard = target_profiles.argmax(dim=1)
+        correct += (pred_hard == target_hard).sum().item()
+        total += batch_size
+
+    return total_loss / total, correct / total, cosine_sum / total
+
+
+@torch.no_grad()
+def get_student_hard_predictions(model, loader, device):
+    """Return argmax(class) targets and predictions for model-2 reporting."""
+    model.eval()
+    all_pred_hard = []
+    all_target_hard = []
+
+    for x_batch, target_profiles in loader:
+        x_batch = x_batch.to(device)
+        logits = model(x_batch)
+        pred_hard = logits.argmax(dim=1).cpu().numpy()
+        target_hard = target_profiles.argmax(dim=1).cpu().numpy()
+        all_pred_hard.extend(pred_hard)
+        all_target_hard.extend(target_hard)
+
+    return all_target_hard, all_pred_hard
+
+
 def main():
-    """Train both models and save the artifacts."""
+    """Train teacher (model 1), distill soft profiles, then train student (model 2)."""
     print("Loading and preprocessing data...")
     df = load_dataset()
-
     validate_required_columns(df)
 
     df = df[["correct", "incorrect", "error_type"]].dropna().copy()
@@ -217,50 +338,92 @@ def main():
         pairs,
         labels,
         test_size=0.2,
-        random_state=42,
+        random_state=RANDOM_STATE,
         stratify=labels,
     )
 
-    train_dataset = PairSequenceDataset(train_pairs, train_labels, tokenizer)
-    val_dataset = PairSequenceDataset(val_pairs, val_labels, tokenizer)
+    train_pair_dataset = PairSequenceDataset(train_pairs, train_labels, tokenizer)
+    val_pair_dataset = PairSequenceDataset(val_pairs, val_labels, tokenizer)
 
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, collate_fn=collate_sequences)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, collate_fn=collate_sequences)
+    train_pair_loader = DataLoader(
+        train_pair_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        collate_fn=collate_pair_sequences,
+    )
+    val_pair_loader = DataLoader(
+        val_pair_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        collate_fn=collate_pair_sequences,
+    )
 
     num_classes = len(label_encoder.classes_)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    num_epochs = 30
 
-    print("Training Model 1 (BiLSTM)...")
+    print("Training Model 1 (BiLSTM teacher)...")
     model1 = Model1_BiLSTM(vocab_size=tokenizer.vocab_size, num_classes=num_classes).to(device)
-    optimizer = optim.Adam(model1.parameters(), lr=1e-3)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
+    optimizer1 = optim.Adam(model1.parameters(), lr=LEARNING_RATE)
+    scheduler1 = optim.lr_scheduler.ReduceLROnPlateau(optimizer1, patience=3, factor=0.5)
 
-    for epoch in range(1, num_epochs + 1):
-        tr_loss, tr_acc = train_epoch(model1, train_loader, optimizer, device)
-        vl_loss, vl_acc = evaluate(model1, val_loader, device)
-        scheduler.step(vl_loss)
-        print(f"Epoch {epoch:3d} | train {tr_loss:.4f} / {tr_acc:.3f} | val {vl_loss:.4f} / {vl_acc:.3f}")
+    for epoch in range(1, NUM_EPOCHS + 1):
+        tr_loss, tr_acc = train_classifier_epoch(model1, train_pair_loader, optimizer1, device)
+        vl_loss, vl_acc = evaluate_classifier(model1, val_pair_loader, device)
+        scheduler1.step(vl_loss)
+        print(
+            f"Model1 Epoch {epoch:3d} | "
+            f"train loss/acc {tr_loss:.4f} / {tr_acc:.3f} | "
+            f"val loss/acc {vl_loss:.4f} / {vl_acc:.3f}"
+        )
 
-    true_labels, pred_labels = get_predictions(model1, val_loader, device)
-    print(classification_report(true_labels, pred_labels, target_names=label_encoder.classes_))
-    print("Validation accuracy:", accuracy_score(true_labels, pred_labels))
+    m1_true_labels, m1_pred_labels = get_hard_predictions(model1, val_pair_loader, device)
+    print("\nModel 1 classification report")
+    print(classification_report(m1_true_labels, m1_pred_labels, target_names=label_encoder.classes_))
+    print("Model 1 validation accuracy:", accuracy_score(m1_true_labels, m1_pred_labels))
     torch.save(model1.state_dict(), MODEL_DIR / "model1_bilstm.pth")
 
-    print("Training Model 2 (Char-CNN)...")
+    print("\nGenerating teacher soft profiles for full split dataset...")
+    train_soft_profiles = generate_teacher_profiles(model1, train_pair_dataset, device)
+    val_soft_profiles = generate_teacher_profiles(model1, val_pair_dataset, device)
+
+    train_words = [correct for correct, _ in train_pairs]
+    val_words = [correct for correct, _ in val_pairs]
+
+    train_word_dataset = WordProfileDataset(train_words, train_soft_profiles, tokenizer)
+    val_word_dataset = WordProfileDataset(val_words, val_soft_profiles, tokenizer)
+
+    train_word_loader = DataLoader(
+        train_word_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        collate_fn=collate_word_profiles,
+    )
+    val_word_loader = DataLoader(
+        val_word_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        collate_fn=collate_word_profiles,
+    )
+
+    print("Training Model 2 (Char-CNN student with KL divergence)...")
     model2 = Model2_CharCNN(vocab_size=tokenizer.vocab_size, num_classes=num_classes).to(device)
-    optimizer = optim.Adam(model2.parameters(), lr=1e-3)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
+    optimizer2 = optim.Adam(model2.parameters(), lr=LEARNING_RATE)
+    scheduler2 = optim.lr_scheduler.ReduceLROnPlateau(optimizer2, patience=3, factor=0.5)
 
-    for epoch in range(1, num_epochs + 1):
-        tr_loss, tr_acc = train_epoch(model2, train_loader, optimizer, device)
-        vl_loss, vl_acc = evaluate(model2, val_loader, device)
-        scheduler.step(vl_loss)
-        print(f"Epoch {epoch:3d} | train {tr_loss:.4f} / {tr_acc:.3f} | val {vl_loss:.4f} / {vl_acc:.3f}")
+    for epoch in range(1, NUM_EPOCHS + 1):
+        tr_loss, tr_acc, tr_cos = train_student_epoch(model2, train_word_loader, optimizer2, device)
+        vl_loss, vl_acc, vl_cos = evaluate_student(model2, val_word_loader, device)
+        scheduler2.step(vl_loss)
+        print(
+            f"Model2 Epoch {epoch:3d} | "
+            f"train KL/acc/cos {tr_loss:.4f} / {tr_acc:.3f} / {tr_cos:.3f} | "
+            f"val KL/acc/cos {vl_loss:.4f} / {vl_acc:.3f} / {vl_cos:.3f}"
+        )
 
-    true_labels, pred_labels = get_predictions(model2, val_loader, device)
-    print(classification_report(true_labels, pred_labels, target_names=label_encoder.classes_))
-    print("Validation accuracy:", accuracy_score(true_labels, pred_labels))
+    m2_target_hard, m2_pred_hard = get_student_hard_predictions(model2, val_word_loader, device)
+    print("\nModel 2 classification report (argmax target profile vs argmax prediction)")
+    print(classification_report(m2_target_hard, m2_pred_hard, target_names=label_encoder.classes_))
+    print("Model 2 hard validation accuracy:", accuracy_score(m2_target_hard, m2_pred_hard))
     torch.save(model2.state_dict(), MODEL_DIR / "model2_cnn.pth")
 
     joblib.dump(tokenizer, MODEL_DIR / "char_tokenizer.joblib")
