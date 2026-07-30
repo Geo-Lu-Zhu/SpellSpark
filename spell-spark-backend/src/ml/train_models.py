@@ -22,6 +22,7 @@ except ImportError:
     from char_tokenizer import CharTokenizer, PAD_IDX, build_tokenizer_from_pairs
 
 
+# Define paths for the project
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 DATA_CANDIDATES = [
@@ -31,6 +32,7 @@ DATA_CANDIDATES = [
 MODEL_ROOT = BACKEND_ROOT / "models"
 MODEL_ROOT.mkdir(parents=True, exist_ok=True)
 
+# Define constants for training
 RANDOM_STATE = 42
 BATCH_SIZE = 32
 NUM_EPOCHS = 30
@@ -38,7 +40,7 @@ LEARNING_RATE = 1e-3
 
 
 def resolve_data_path() -> Path:
-    """Return the first existing dataset path."""
+    """Return the first existing dataset path from the candidates."""
     for candidate in DATA_CANDIDATES:
         if candidate.exists():
             return candidate
@@ -56,10 +58,12 @@ def setup_run_logger(run_dir: Path) -> logging.Logger:
 
     formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
 
+    # Log to console
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
+    # Log to a file in the run directory
     file_handler = logging.FileHandler(run_dir / "train.log", encoding="utf-8")
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -87,6 +91,7 @@ def validate_required_columns(df: pd.DataFrame) -> None:
         raise KeyError(f"Missing required columns: {missing_columns}")
 
 
+# Dataset for BiLSTM (Model 1)
 class PairSequenceDataset(Dataset):
     """Pair inputs for Model 1: (correct, incorrect) -> hard class label."""
 
@@ -101,6 +106,7 @@ class PairSequenceDataset(Dataset):
         return self.sequences[idx], self.labels[idx]
 
 
+# Dataset for Char-CNN (Model 2)
 class WordProfileDataset(Dataset):
     """Word inputs for Model 2: correct_word -> teacher soft class distribution."""
 
@@ -115,6 +121,7 @@ class WordProfileDataset(Dataset):
         return self.sequences[idx], self.profiles[idx]
 
 
+# Collate function for BiLSTM
 def collate_pair_sequences(batch):
     """Pad tokenized pair sequences and return hard labels."""
     sequences, labels = zip(*batch)
@@ -123,6 +130,7 @@ def collate_pair_sequences(batch):
     return torch.tensor(padded, dtype=torch.long), torch.tensor(labels, dtype=torch.long)
 
 
+# Collate function for Char-CNN
 def collate_word_profiles(batch):
     """Pad tokenized words and return soft-profile targets."""
     sequences, profiles = zip(*batch)
@@ -131,6 +139,7 @@ def collate_word_profiles(batch):
     return torch.tensor(padded, dtype=torch.long), torch.tensor(profiles, dtype=torch.float32)
 
 
+# BiLSTM Model (Teacher)
 class Model1_BiLSTM(nn.Module):
     def __init__(self, vocab_size, embed_dim=32, hidden_dim=64, num_layers=2, num_classes=5, dropout=0.3):
         """Build the BiLSTM classifier used for Model 1."""
@@ -145,23 +154,25 @@ class Model1_BiLSTM(nn.Module):
             dropout=dropout if num_layers > 1 else 0.0,
         )
         self.dropout = nn.Dropout(dropout)
-        self.fc1 = nn.Linear(hidden_dim * 2, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, num_classes)
+        self.fc1 = nn.Linear(hidden_dim * 2, hidden_dim)  # Fully connected layer for embeddings
+        self.fc2 = nn.Linear(hidden_dim, num_classes)  # Fully connected layer for classification
 
     def forward(self, x):
         """Run a forward pass through the BiLSTM."""
         emb = self.dropout(self.embedding(x))
         _, (h_n, _) = self.lstm(emb)
-        h_fwd = h_n[-2]
-        h_bwd = h_n[-1]
-        h = torch.cat([h_fwd, h_bwd], dim=1)
+        h_fwd = h_n[-2]  # Forward hidden state
+        h_bwd = h_n[-1]  # Backward hidden state
+        h = torch.cat([h_fwd, h_bwd], dim=1)  # Concatenate forward and backward hidden states
         h = self.dropout(h)
-        h = F.relu(self.fc1(h))
-        return self.fc2(h)
+        embeddings = F.relu(self.fc1(h))  # Error profile embeddings
+        logits = self.fc2(embeddings)  # Error type probabilities
+        return logits, embeddings
 
 
+# Char-CNN Model (Student)
 class Model2_CharCNN(nn.Module):
-    def __init__(self, vocab_size, embed_dim=32, num_filters=64, kernel_sizes=(2, 3, 4), num_classes=5, dropout=0.5):
+    def __init__(self, vocab_size, embed_dim=32, num_filters=64, kernel_sizes=(2, 3, 4), embedding_dim=64, dropout=0.5):
         """Build the character CNN used for Model 2."""
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=PAD_IDX)
@@ -171,19 +182,20 @@ class Model2_CharCNN(nn.Module):
         self.dropout = nn.Dropout(dropout)
         total_filters = num_filters * len(kernel_sizes)
         self.fc1 = nn.Linear(total_filters, total_filters // 2)
-        self.fc2 = nn.Linear(total_filters // 2, num_classes)
+        self.fc2 = nn.Linear(total_filters // 2, embedding_dim)  # Output matches BiLSTM embedding size
 
     def forward(self, x):
         """Run a forward pass through the Char-CNN."""
-        emb = self.embedding(x).permute(0, 2, 1)
+        emb = self.embedding(x).permute(0, 2, 1)  # Change shape for Conv1d
         pooled = []
         for conv in self.convs:
             out = F.relu(conv(emb))
-            pooled.append(out.max(dim=2).values)
+            pooled.append(out.max(dim=2).values)  # Max pooling
         cat = torch.cat(pooled, dim=1)
         cat = self.dropout(cat)
         h = F.relu(self.fc1(cat))
-        return self.fc2(h)
+        embeddings = self.fc2(h)  # Predicted embeddings
+        return embeddings
 
 
 def train_classifier_epoch(model, loader, optimizer, device):
@@ -263,63 +275,46 @@ def generate_teacher_profiles(model, dataset, device):
 def train_student_epoch(model, loader, optimizer, device):
     """Train one epoch for soft-label distillation (Model 2)."""
     model.train()
-    total_loss, total, correct = 0.0, 0, 0
-    cosine_sum = 0.0
+    total_loss, total, cosine_sum = 0.0, 0, 0.0
 
-    for x_batch, target_profiles in loader:
+    for x_batch, target_embeddings in loader:
         x_batch = x_batch.to(device)
-        target_profiles = target_profiles.to(device)
+        target_embeddings = target_embeddings.to(device)
 
-        logits = model(x_batch)
-        log_probs = F.log_softmax(logits, dim=1)
-        pred_profiles = log_probs.exp()
-
-        loss = F.kl_div(log_probs, target_profiles, reduction="batchmean")
+        predicted_embeddings = model(x_batch)
+        loss = F.mse_loss(predicted_embeddings, target_embeddings)  # Mean squared error loss
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        batch_size = target_profiles.size(0)
+        batch_size = target_embeddings.size(0)
         total_loss += loss.item() * batch_size
-        cosine_sum += F.cosine_similarity(pred_profiles, target_profiles, dim=1).sum().item()
-
-        pred_hard = logits.argmax(dim=1)
-        target_hard = target_profiles.argmax(dim=1)
-        correct += (pred_hard == target_hard).sum().item()
+        cosine_sum += F.cosine_similarity(predicted_embeddings, target_embeddings, dim=1).sum().item()
         total += batch_size
 
-    return total_loss / total, correct / total, cosine_sum / total
+    return total_loss / total, cosine_sum / total
 
 
 @torch.no_grad()
 def evaluate_student(model, loader, device):
     """Evaluate one epoch for soft-label distillation (Model 2)."""
     model.eval()
-    total_loss, total, correct = 0.0, 0, 0
-    cosine_sum = 0.0
+    total_loss, total, cosine_sum = 0.0, 0, 0.0
 
-    for x_batch, target_profiles in loader:
+    for x_batch, target_embeddings in loader:
         x_batch = x_batch.to(device)
-        target_profiles = target_profiles.to(device)
+        target_embeddings = target_embeddings.to(device)
 
-        logits = model(x_batch)
-        log_probs = F.log_softmax(logits, dim=1)
-        pred_profiles = log_probs.exp()
+        predicted_embeddings = model(x_batch)
+        loss = F.mse_loss(predicted_embeddings, target_embeddings)  # Mean squared error loss
 
-        loss = F.kl_div(log_probs, target_profiles, reduction="batchmean")
-
-        batch_size = target_profiles.size(0)
+        batch_size = target_embeddings.size(0)
         total_loss += loss.item() * batch_size
-        cosine_sum += F.cosine_similarity(pred_profiles, target_profiles, dim=1).sum().item()
-
-        pred_hard = logits.argmax(dim=1)
-        target_hard = target_profiles.argmax(dim=1)
-        correct += (pred_hard == target_hard).sum().item()
+        cosine_sum += F.cosine_similarity(predicted_embeddings, target_embeddings, dim=1).sum().item()
         total += batch_size
 
-    return total_loss / total, correct / total, cosine_sum / total
-
+    return total_loss / total, cosine_sum / total
 
 @torch.no_grad()
 def get_student_hard_predictions(model, loader, device):
