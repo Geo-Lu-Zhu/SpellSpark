@@ -102,12 +102,11 @@ def run(raw_data):
         
         # Run through Model 1
         with torch.no_grad():
-            logits, _ = model(input_tensor)
-            # Convert logits to soft probability profile
-            user_profile = F.softmax(logits, dim=1)
+            # 1. Capture the 64-dim feature embedding (the second return value)
+            _, user_embedding = model(input_tensor) 
             
-        # Compute Cosine Similarity against the Vocab Bank
-        similarities = cosine_similarity(user_profile, vocab_bank_tensor)
+        # 2. Compare the 64-dim user_embedding directly against the 64-dim vocab_bank_tensor
+        similarities = cosine_similarity(user_embedding, vocab_bank_tensor)
         
         # Extract the Top 3 Recommendations
         top_scores, top_indices = torch.topk(similarities, 3)
