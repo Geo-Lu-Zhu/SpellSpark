@@ -346,4 +346,96 @@ input:focus {
   0% { opacity: 0; transform: scale(0.5); }
   100% { opacity: 1; transform: scale(1); }
 }
+/* --- White Title with Orange Glow --- */
+h1 {
+  font-size: 4rem; 
+  /* Increased from 50px to 80px to add more space between the title and the buttons below it */
+  margin-bottom: 80px; 
+  color: #ffffff; 
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  text-shadow: 
+    0 0 10px #FF9800, 
+    0 0 20px #FF9800, 
+    0 0 40px #E65100; 
+}
+
+/* --- Shared Base for Cartoon Buttons --- */
+.start-btn, .audio-btn {
+  font-size: 2rem;
+  font-weight: 900;
+  font-family: 'Comic Sans MS', 'Chalkboard SE', 'Marker Felt', sans-serif;
+  padding: 20px 50px; 
+  border-radius: 50px; 
+  border: 4px solid #ffffff; 
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  outline: none;
+  transition: all 0.1s ease-in-out;
+}
+
+/* --- Start Game Button (Green Theme) --- */
+.start-btn {
+  background-color: #4CAF50; /* Bright playful green */
+  color: #ffffff;
+  box-shadow: 0 10px 0 #2E7D32; /* Dark green 3D shadow */
+}
+
+.start-btn:hover {
+  background-color: #66BB6A; /* Lighter green on hover */
+}
+
+.start-btn:active {
+  transform: translateY(10px); 
+  box-shadow: 0 0 0 #2E7D32; 
+}
+
+/* --- Hear Word Button (Orange Theme) --- */
+.audio-btn {
+  background-color: #FF9800; /* Vibrant orange */
+  color: #ffffff;
+  box-shadow: 0 10px 0 #E65100; /* Dark orange 3D shadow */
+  /* Increased significantly to push the input box further down */
+  margin-bottom: 60px; 
+}
+
+.audio-btn:hover {
+  background-color: #FFA726; 
+}
+
+.audio-btn:active {
+  transform: translateY(10px); 
+  box-shadow: 0 0 0 #E65100; 
+}
+
+/* --- White Input Box with Orange Glow --- */
+/* --- White Input Box with Orange Glow --- */
+input {
+  background: #1a1a1a; 
+  border: 4px solid #ffffff; 
+  color: #ffffff; 
+  padding: 20px 30px;
+  font-size: 2.5rem;
+  border-radius: 25px; 
+  text-align: center;
+  outline: none;
+  transition: all 0.3s ease;
+  
+  /* --- Widened Box --- */
+  width: 100%;
+  min-width: 750px; /* Increased from 550px to fit the new placeholder */
+  max-width: 90vw;  /* Keeps it from breaking mobile screens */
+  
+  box-shadow: 0 0 15px #FF9800; 
+}
+
+input:focus {
+  box-shadow: 0 0 25px #FF9800, 0 0 40px #E65100; 
+  border-color: #FFB74D; 
+}
+
+input::placeholder {
+  color: #a0a0a0; 
+}
 </style>
