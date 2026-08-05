@@ -1,18 +1,14 @@
 <template>
   <div class="spelling-app">
     <canvas ref="particleCanvas" class="particle-canvas"></canvas>
-
-    <h1>Spelling Adventure</h1>
+    <h1>SpellSpark</h1>
+    <h1>The Spelling Adventure</h1>
 
     <div v-if="!isPlaying" class="center-content">
       <button @click="startGame" class="start-btn">Start Game</button>
     </div>
 
     <div v-else class="game-container">
-      
-      <div class="definition-box" v-if="definition">
-        <p><strong>Meaning:</strong> {{ definition }}</p>
-      </div>
 
       <button @click="speakWord(currentWord)" class="audio-btn">🔊 Hear Word</button>
 
@@ -21,8 +17,9 @@
           ref="wordInput"
           v-model="userInput" 
           @keyup.enter="checkSpelling" 
+          @keydown.ctrl.prevent="speakWord(currentWord)"
           @input="spawnTypingParticles"
-          placeholder="Type here..." 
+          placeholder="Type here...(Press Ctrl to hear again)" 
           :disabled="isAnimating"
           autofocus
         />
@@ -42,10 +39,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, nextTick } from 'vue';
 import Papa from 'papaparse';
 
-// State Variables
+// --- State Variables ---
 const isPlaying = ref(false);
 const isAnimating = ref(false);
 const vocabulary = ref([]);
@@ -55,7 +52,7 @@ const userInput = ref('');
 const showSuccess = ref(false);
 const showFailure = ref(false);
 
-// DOM Refs for Canvas & Input
+// --- DOM Refs for Canvas & Input ---
 const particleCanvas = ref(null);
 const wordInput = ref(null);
 let ctx = null;
@@ -64,6 +61,7 @@ let animationFrameId = null;
 
 // --- Canvas Particle Logic (Typing Drizzle) ---
 onMounted(() => {
+  loadVocabulary(); // Load the CSV in the background immediately
   if (particleCanvas.value) {
     ctx = particleCanvas.value.getContext('2d');
     resizeCanvas();
@@ -89,8 +87,8 @@ const animateParticles = () => {
     let p = particles[i];
     p.x += p.vx;
     p.y += p.vy;
-    p.vy += 0.2; // Gravity
-    p.alpha -= 0.02; // Fade out
+    p.vy += 0.2; 
+    p.alpha -= 0.02; 
     
     ctx.fillStyle = `rgba(${p.color}, ${p.alpha})`;
     ctx.beginPath();
@@ -106,98 +104,126 @@ const animateParticles = () => {
 
 const spawnTypingParticles = () => {
   if (!wordInput.value) return;
-  
-  // Get input position to spawn particles nearby
   const rect = wordInput.value.getBoundingClientRect();
   const spawnX = rect.left + Math.random() * rect.width;
-  const spawnY = rect.bottom; // Drizzle from the bottom of the input
+  const spawnY = rect.bottom; 
 
   for (let i = 0; i < 5; i++) {
     particles.push({
       x: spawnX,
       y: spawnY,
-      vx: (Math.random() - 0.5) * 4, // Spread left/right
-      vy: Math.random() * -3, // Slight upward burst before falling
+      vx: (Math.random() - 0.5) * 4,
+      vy: Math.random() * -3, 
       size: Math.random() * 3 + 1,
-      color: '255, 165, 0', // Orange RGB
+      color: '255, 165, 0', 
       alpha: 1
     });
   }
 };
 
-// --- Game Logic ---
+// --- Data Loading ---
 const loadVocabulary = async () => {
-  // Simplified for example; replace with your actual fetch logic
-  vocabulary.value = ['apple', 'banana', 'orange', 'grape'];
+  try {
+    const response = await fetch('/vocabulary-bank.csv');
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    
+    const csvText = await response.text();
+
+    Papa.parse(csvText, {
+      header: true, 
+      skipEmptyLines: true,
+      complete: (results) => {
+        const cleanWords = results.data
+          .map(row => {
+            const rawWord = row.word || row.Word || Object.values(row)[0];
+            return rawWord ? String(rawWord).trim() : '';
+          })
+          .filter(word => word.length > 0);
+
+        vocabulary.value = cleanWords;
+      },
+      error: (error) => fallbackVocabulary()
+    });
+  } catch (error) {
+    fallbackVocabulary();
+  }
 };
 
-const startGame = async () => {
-  await loadVocabulary();
-  isPlaying.value = true;
-  nextWord();
+const fallbackVocabulary = () => {
+  vocabulary.value = ['apple', 'banana', 'orange', 'grape', 'answer', 'choose', 'compare'];
 };
 
-const nextWord = async () => {
-  userInput.value = '';
-  isAnimating.value = false;
-  showSuccess.value = false;
-  showFailure.value = false;
-
-  const randomIndex = Math.floor(Math.random() * vocabulary.value.length);
-  currentWord.value = vocabulary.value[randomIndex];
-  definition.value = "A sample definition for the word."; 
-  
-  speakWord(currentWord.value);
-  // Re-focus input after resetting
-  setTimeout(() => wordInput.value && wordInput.value.focus(), 100);
-};
-
+// --- Audio Logic ---
 const speakWord = (word) => {
-  const utterance = new SpeechSynthesisUtterance(word);
-  window.speechSynthesis.speak(utterance);
+  if (!word) return;
+  // Cancel any stuck speech
+  window.speechSynthesis.cancel();
+  // Use a global variable to prevent the browser from deleting the speech object
+  window.globalUtterance = new SpeechSynthesisUtterance(word);
+  window.globalUtterance.volume = 1; 
+  window.speechSynthesis.speak(window.globalUtterance);
 };
 
 const playApplause = () => {
   const audio = new Audio('/applause.mp3'); 
   audio.volume = 0.5; 
-  
-  audio.play().catch(e => console.log("Audio play blocked by browser:", e));
-
-  // Stop the audio after 3000 milliseconds (3 seconds)
-  setTimeout(() => {
-    audio.pause();           // Stop the playback
-    audio.currentTime = 0;   // Rewind back to the very beginning
-  }, 3000);
+  audio.play().catch(() => {});
+  setTimeout(() => { audio.pause(); audio.currentTime = 0; }, 3000);
 };
 
 const playMoo = () => {
   const audio = new Audio('/moo.wav');
   audio.volume = 0.6; 
-  
-  audio.play().catch(e => console.log("Audio play blocked by browser:", e));
+  audio.play().catch(() => {});
+  setTimeout(() => { audio.pause(); audio.currentTime = 0; }, 3000);
+};
 
-  // Stop the audio after 3000 milliseconds (3 seconds)
+// --- Game Logic ---
+const startGame = () => {
+  // Unlock the speech engine on the very first click
+  window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+  isPlaying.value = true;
+  nextWord();
+};
+
+const nextWord = () => {
+  userInput.value = '';
+  isAnimating.value = false;
+  showSuccess.value = false;
+  showFailure.value = false;
+
+  if (vocabulary.value.length === 0) fallbackVocabulary();
+
+  const randomIndex = Math.floor(Math.random() * vocabulary.value.length);
+  currentWord.value = vocabulary.value[randomIndex];
+  definition.value = "A sample definition for the word."; 
+  
+  // Auto-play the word
+  speakWord(currentWord.value);
+
+  // Safely refocus
   setTimeout(() => {
-    audio.pause();           // Stop the playback
-    audio.currentTime = 0;   // Rewind back to the very beginning
-  }, 3000);
+    if (wordInput.value) {
+      wordInput.value.disabled = false;
+      wordInput.value.focus();
+    }
+  }, 150);
 };
 
 const checkSpelling = () => {
   if (!userInput.value) return;
   isAnimating.value = true; 
 
+  // KEEP AWAKE TRICK: Silently ping the speech engine so it doesn't fall asleep during the timeout
+  window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+
   if (userInput.value.toLowerCase().trim() === currentWord.value.toLowerCase()) {
-    // Correct Answer
     showSuccess.value = true;
-    playApplause(); // Play the applause sound
-    
+    playApplause(); 
     setTimeout(nextWord, 3000);
   } else {
-    // Wrong Answer
     showFailure.value = true;
-    playMoo(); // Play the cow moo sound
-    
+    playMoo(); 
     setTimeout(nextWord, 5000); 
   }
 };
@@ -247,6 +273,11 @@ input {
   text-align: center;
   outline: none;
   transition: border-color 0.3s;
+  
+  /* --- New Width Properties --- */
+  width: 100%;
+  min-width: 550px; /* Gives plenty of room for the new placeholder */
+  max-width: 90vw;  /* Prevents it from breaking off the edge of smaller screens */
 }
 
 input:focus {
