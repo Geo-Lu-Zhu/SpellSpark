@@ -5,3 +5,4 @@
 __pycache__/
 /spell-spark-backend/models/*
 local run check/
+test.py
