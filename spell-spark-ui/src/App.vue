@@ -3,14 +3,16 @@
     <canvas ref="particleCanvas" class="particle-canvas"></canvas>
     <h1>SpellSpark</h1>
     <h1>The Spelling Adventure</h1>
-
     <div v-if="!isPlaying" class="center-content">
       <button @click="startGame" class="start-btn">Start Game</button>
     </div>
 
     <div v-else class="game-container">
 
-      <button @click="speakWord(currentWord)" class="audio-btn">🔊 Hear Word</button>
+    <button class="audio-btn" @click="speakWord(currentWord)">
+      <img src="/speaker.png" alt="Speaker Icon" class="btn-icon" />
+      Hear Word
+    </button>
 
       <div class="input-area">
         <input 
@@ -349,8 +351,6 @@ input:focus {
 /* --- White Title with Orange Glow --- */
 h1 {
   font-size: 4rem; 
-  /* Increased from 50px to 80px to add more space between the title and the buttons below it */
-  margin-bottom: 80px; 
   color: #ffffff; 
   text-transform: uppercase;
   letter-spacing: 3px;
@@ -358,8 +358,13 @@ h1 {
     0 0 10px #FF9800, 
     0 0 20px #FF9800, 
     0 0 40px #E65100; 
+  margin-top: 0;
+  margin-bottom: 80px; /* Makes the two titles sit nicely together */
 }
-
+/* --- Keep the big space below the SECOND title --- */
+h1:last-of-type {
+  margin-bottom: 80px; /* Pushes the buttons and input box down */
+}
 /* --- Shared Base for Cartoon Buttons --- */
 .start-btn, .audio-btn {
   font-size: 2rem;
@@ -437,5 +442,33 @@ input:focus {
 
 input::placeholder {
   color: #a0a0a0; 
+}
+/* --- Shared Base for Cartoon Buttons --- */
+.start-btn, .audio-btn {
+  font-size: 2rem;
+  font-weight: 900;
+  font-family: 'Comic Sans MS', 'Chalkboard SE', 'Marker Felt', sans-serif;
+  padding: 20px 50px; 
+  border-radius: 50px; 
+  border: 4px solid #ffffff; 
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  outline: none;
+  transition: all 0.1s ease-in-out;
+  
+  /* --- NEW: Flexbox alignment for the icon --- */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px; /* Adds perfect spacing between the icon and the text */
+}
+
+/* --- NEW: Icon Styling --- */
+.btn-icon {
+  width: 65px; /* Adjust this number to make the icon bigger or smaller */
+  height: auto;
+  /* Optional: If your PNG is black and you want it to be white to match the text, uncomment the next line */
+  /* filter: invert(100%); */ 
 }
 </style>
