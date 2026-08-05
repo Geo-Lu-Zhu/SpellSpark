@@ -359,11 +359,11 @@ h1 {
     0 0 20px #FF9800, 
     0 0 40px #E65100; 
   margin-top: 0;
-  margin-bottom: 80px; /* Makes the two titles sit nicely together */
+  margin-bottom: 60px; /* Makes the two titles sit nicely together */
 }
 /* --- Keep the big space below the SECOND title --- */
 h1:last-of-type {
-  margin-bottom: 80px; /* Pushes the buttons and input box down */
+  margin-bottom: 120px; /* Pushes the buttons and input box down */
 }
 /* --- Shared Base for Cartoon Buttons --- */
 .start-btn, .audio-btn {
@@ -414,7 +414,6 @@ h1:last-of-type {
   box-shadow: 0 0 0 #E65100; 
 }
 
-/* --- White Input Box with Orange Glow --- */
 /* --- White Input Box with Orange Glow --- */
 input {
   background: #1a1a1a; 
