@@ -457,4 +457,14 @@ Contributions are welcome! Please refer to the main project documentation for gu
 
 ---
 
-**Last Updated**: 2026-07-22
+## 📝 Updates
+
+| Date | Update |
+|------|--------|
+| August 06, 2026 | Changed the number of training epochs to 50 to improve Model 1 performance; weighted avg macro F1 increased to 0.675. |
+| August 06, 2026 | Modified data preprocessing for Model 1 so that all sequences are padded to the same length (max length = 55; informed by the length of the training/vocab data). The same max padding length is applied to all inputs during inference to ensure consistent and stable predictions. |
+| August 04, 2026 | Switched to using the activated values from the last hidden layer (dim = 64) of Model 1 (BiLSTM) as the "error profiles" instead of the softmax label probabilities. |
+
+---
+
+**Last Updated**: 2026-08-06
