@@ -43,6 +43,9 @@ LEARNING_RATE = 1e-3
 # Teacher (BiLSTM) Config
 TEACHER_HIDDEN_DIM = 64
 
+# Fixed padding length: covers the longest pair in training and inference vocab data
+MAX_SEQ_LEN = 55
+
 # Student (Char-CNN) Config
 STUDENT_EMBED_DIM = 64
 STUDENT_NUM_FILTERS = 64
@@ -136,8 +139,7 @@ class WordProfileDataset(Dataset):
 def collate_pair_sequences(batch):
     """Pad tokenized pair sequences and return hard labels."""
     sequences, labels = zip(*batch)
-    max_len = max(len(sequence) for sequence in sequences)
-    padded = [sequence + [PAD_IDX] * (max_len - len(sequence)) for sequence in sequences]
+    padded = [(seq + [PAD_IDX] * MAX_SEQ_LEN)[:MAX_SEQ_LEN] for seq in sequences]
     return torch.tensor(padded, dtype=torch.long), torch.tensor(labels, dtype=torch.long)
 
 
@@ -145,9 +147,8 @@ def collate_pair_sequences(batch):
 def collate_word_profiles(batch):
     """Pad tokenized words and return embedding targets."""
     sequences, profiles = zip(*batch)
-    max_len = max(len(sequence) for sequence in sequences)
-    padded = [sequence + [PAD_IDX] * (max_len - len(sequence)) for sequence in sequences]
-    # Use torch.stack to combine the embeddings into a single tensor
+    max_len = max(len(seq) for seq in sequences)
+    padded = [seq + [PAD_IDX] * (max_len - len(seq)) for seq in sequences]
     return torch.tensor(padded, dtype=torch.long), torch.stack(profiles)
 
 
