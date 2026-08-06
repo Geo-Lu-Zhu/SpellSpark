@@ -1,3 +1,7 @@
 /DataProcessing.ipynb
 /raw_words_bank.csv
 /spell-spark-ui/package-lock.json
+/.venv*
+__pycache__/
+/spell-spark-backend/models/*
+local run check/

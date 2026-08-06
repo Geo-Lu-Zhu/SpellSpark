@@ -1,0 +1,1 @@
+{"timestamp": "20260802_180502", "vocab_size": 34, "num_classes": 5, "class_to_idx": {"complex/multiple": 0, "extra_letter": 1, "missing_letter": 2, "phoneme_substitution": 3, "substitution": 4}, "idx_to_class": {"0": "complex/multiple", "1": "extra_letter", "2": "missing_letter", "3": "phoneme_substitution", "4": "substitution"}}
