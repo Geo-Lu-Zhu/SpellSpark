@@ -5,7 +5,6 @@ import pandas as pd
 import torch.nn as nn
 import torch.nn.functional as F
 import tokenizer
-from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence
 import glob
 
 from azureml.ai.monitoring import Collector
@@ -30,14 +29,9 @@ class Model1_BiLSTM(nn.Module):
         self.fc1 = nn.Linear(hidden_dim * 2, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, num_classes)
 
-    def forward(self, x, lengths=None):
+    def forward(self, x):
         emb = self.dropout(self.embedding(x))
-        if lengths is not None:
-            # packing ensures h_n is taken at each sequence's actual last token, not at padding
-            packed = pack_padded_sequence(emb, lengths.cpu(), batch_first=True, enforce_sorted=False)
-            _, (h_n, _) = self.lstm(packed)
-        else:
-            _, (h_n, _) = self.lstm(emb)
+        _, (h_n, _) = self.lstm(emb)
         h = torch.cat([h_n[-2], h_n[-1]], dim=1)
         embeddings = F.relu(self.fc1(self.dropout(h)))
         logits = self.fc2(embeddings)
@@ -89,6 +83,7 @@ def run(raw_data):
 
         char2idx = config.get('char2idx', None)
         idx_to_class = config.get('idx_to_class', {})
+        max_seq_len = config.get('max_seq_len', 55)
 
         # Log inputs
         input_df = pd.DataFrame(items)
@@ -102,13 +97,14 @@ def run(raw_data):
                 str(item.get('incorrect_word', '')),
                 char2idx=char2idx
             )
-            seq_tensors.append(torch.tensor(seq_ids, dtype=torch.long))
+            seq_tensors.append(seq_ids)
 
-        lengths = torch.tensor([t.size(0) for t in seq_tensors], dtype=torch.long)
-        input_tensor = pad_sequence(seq_tensors, batch_first=True, padding_value=0)
+        # fixed-length padding matches training collate_fn exactly
+        padded = [(s + [0] * max_seq_len)[:max_seq_len] for s in seq_tensors]
+        input_tensor = torch.tensor(padded, dtype=torch.long)
 
         with torch.no_grad():
-            logits, user_embeddings = model(input_tensor, lengths)  # [B, num_classes], [B, 64]
+            logits, user_embeddings = model(input_tensor)  # [B, num_classes], [B, 64]
 
         # Matrix cosine similarity: [B, N]
         user_norm = F.normalize(user_embeddings, p=2, dim=1)
