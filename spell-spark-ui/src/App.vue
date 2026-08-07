@@ -49,10 +49,12 @@ const isPlaying = ref(false);
 const isAnimating = ref(false);
 const vocabulary = ref([]);
 const currentWord = ref('');
-const definition = ref('');
 const userInput = ref('');
 const showSuccess = ref(false);
 const showFailure = ref(false);
+const currentListIndex = ref(0);
+const isRecommendedWord = ref(false);
+const nextWordToPlay = ref('');
 
 // --- DOM Refs for Canvas & Input ---
 const particleCanvas = ref(null);
@@ -182,13 +184,18 @@ const playMoo = () => {
 
 // --- Game Logic ---
 const startGame = () => {
-  // Unlock the speech engine on the very first click
   window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
   isPlaying.value = true;
+  
+  // Reset the list index and state to the very beginning
+  currentListIndex.value = 0;
+  isRecommendedWord.value = false;
+  nextWordToPlay.value = vocabulary.value[currentListIndex.value];
+  
   nextWord();
 };
 
-const nextWord = () => {
+const nextWord = async () => {
   userInput.value = '';
   isAnimating.value = false;
   showSuccess.value = false;
@@ -196,37 +203,109 @@ const nextWord = () => {
 
   if (vocabulary.value.length === 0) fallbackVocabulary();
 
-  const randomIndex = Math.floor(Math.random() * vocabulary.value.length);
-  currentWord.value = vocabulary.value[randomIndex];
-  definition.value = "A sample definition for the word."; 
+  // Pull the word that was prepared by startGame or checkSpelling
+  currentWord.value = nextWordToPlay.value;
   
-  // Auto-play the word
+  // (The definition line that crashed the app has been removed!)
+  
+  // Now this will successfully run!
   speakWord(currentWord.value);
 
-  // Safely refocus
-  setTimeout(() => {
-    if (wordInput.value) {
-      wordInput.value.disabled = false;
-      wordInput.value.focus();
-    }
-  }, 150);
+  await nextTick();
+  if (wordInput.value) {
+    wordInput.value.focus();
+  }
 };
 
 const checkSpelling = () => {
   if (!userInput.value) return;
   isAnimating.value = true; 
 
-  // KEEP AWAKE TRICK: Silently ping the speech engine so it doesn't fall asleep during the timeout
+  // KEEP AWAKE TRICK: Triggers instantly
   window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
 
-  if (userInput.value.toLowerCase().trim() === currentWord.value.toLowerCase()) {
+  const userSpelled = userInput.value.toLowerCase().trim();
+  const targetWord = currentWord.value.toLowerCase();
+
+  if (userSpelled === targetWord) {
     showSuccess.value = true;
     playApplause(); 
+
+    if (!isRecommendedWord.value) {
+      currentListIndex.value++;
+      
+      if (currentListIndex.value >= vocabulary.value.length) {
+        currentListIndex.value = 0;
+      }
+    }
+    
+    isRecommendedWord.value = false;
+    nextWordToPlay.value = vocabulary.value[currentListIndex.value];
+
+    // Starts countdown instantly
     setTimeout(nextWord, 3000);
   } else {
     showFailure.value = true;
     playMoo(); 
+
+    // 1. Start the 5-second countdown IMMEDIATELY to save the auto-play
     setTimeout(nextWord, 5000); 
+
+    // 2. Fetch the recommendation in the background WITHOUT pausing the function
+    fetchRecommendation(targetWord, userSpelled).then((recommendation) => {
+      // Once Azure replies (usually in ~0.5 seconds), update the variables
+      // silently before the 5-second timer finishes!
+      nextWordToPlay.value = recommendation;
+      isRecommendedWord.value = true;
+    });
+  }
+};
+
+const fetchRecommendation = async (correctWord, incorrectWord) => {
+  // 1. Point to your local Azure Function proxy
+  const url = 'http://localhost:7071/api/predict';
+
+  const data = {
+    requests: [
+      {
+        correct_word: correctWord,
+        incorrect_word: incorrectWord
+      }
+    ]
+  };
+
+  try {
+    // 2. Notice there is no Authorization header here anymore!
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(data)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const result = await response.json();
+    const recommendations = result.results[0].top_3_recommendations;
+
+    // 3. Your original filtering logic remains completely intact
+    let chosenWord = recommendations[0].word; 
+    for (let rec of recommendations) {
+      if (rec.word !== currentWord.value && rec.word !== vocabulary.value[currentListIndex.value]) {
+        chosenWord = rec.word;
+        break;
+      }
+    }
+    
+    return chosenWord;
+  } catch (error) {
+    console.error("Failed to fetch recommendation, falling back to list:", error);
+    // If the network fails, gracefully fall back to the word they failed so they can retry
+    return vocabulary.value[currentListIndex.value];
   }
 };
 </script>
