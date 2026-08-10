@@ -1,28 +1,27 @@
 <template>
   <div class="spelling-app">
     <canvas ref="particleCanvas" class="particle-canvas"></canvas>
-
-    <h1>Spelling Adventure</h1>
-
+    <h1>SpellSpark</h1>
+    <h1>The Spelling Adventure</h1>
     <div v-if="!isPlaying" class="center-content">
       <button @click="startGame" class="start-btn">Start Game</button>
     </div>
 
     <div v-else class="game-container">
-      
-      <div class="definition-box" v-if="definition">
-        <p><strong>Meaning:</strong> {{ definition }}</p>
-      </div>
 
-      <button @click="speakWord(currentWord)" class="audio-btn">🔊 Hear Word</button>
+    <button class="audio-btn" @click="speakWord(currentWord)">
+      <img src="/speaker.png" alt="Speaker Icon" class="btn-icon" />
+      Hear Word
+    </button>
 
       <div class="input-area">
         <input 
           ref="wordInput"
           v-model="userInput" 
           @keyup.enter="checkSpelling" 
+          @keydown.ctrl.prevent="speakWord(currentWord)"
           @input="spawnTypingParticles"
-          placeholder="Type here..." 
+          placeholder="Type here...(Press Ctrl to hear again)" 
           :disabled="isAnimating"
           autofocus
         />
@@ -42,20 +41,22 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, nextTick } from 'vue';
 import Papa from 'papaparse';
 
-// State Variables
+// --- State Variables ---
 const isPlaying = ref(false);
 const isAnimating = ref(false);
 const vocabulary = ref([]);
 const currentWord = ref('');
-const definition = ref('');
 const userInput = ref('');
 const showSuccess = ref(false);
 const showFailure = ref(false);
+const currentListIndex = ref(0);
+const isRecommendedWord = ref(false);
+const nextWordToPlay = ref('');
 
-// DOM Refs for Canvas & Input
+// --- DOM Refs for Canvas & Input ---
 const particleCanvas = ref(null);
 const wordInput = ref(null);
 let ctx = null;
@@ -64,6 +65,7 @@ let animationFrameId = null;
 
 // --- Canvas Particle Logic (Typing Drizzle) ---
 onMounted(() => {
+  loadVocabulary(); // Load the CSV in the background immediately
   if (particleCanvas.value) {
     ctx = particleCanvas.value.getContext('2d');
     resizeCanvas();
@@ -89,8 +91,8 @@ const animateParticles = () => {
     let p = particles[i];
     p.x += p.vx;
     p.y += p.vy;
-    p.vy += 0.2; // Gravity
-    p.alpha -= 0.02; // Fade out
+    p.vy += 0.2; 
+    p.alpha -= 0.02; 
     
     ctx.fillStyle = `rgba(${p.color}, ${p.alpha})`;
     ctx.beginPath();
@@ -106,34 +108,90 @@ const animateParticles = () => {
 
 const spawnTypingParticles = () => {
   if (!wordInput.value) return;
-  
-  // Get input position to spawn particles nearby
   const rect = wordInput.value.getBoundingClientRect();
   const spawnX = rect.left + Math.random() * rect.width;
-  const spawnY = rect.bottom; // Drizzle from the bottom of the input
+  const spawnY = rect.bottom; 
 
   for (let i = 0; i < 5; i++) {
     particles.push({
       x: spawnX,
       y: spawnY,
-      vx: (Math.random() - 0.5) * 4, // Spread left/right
-      vy: Math.random() * -3, // Slight upward burst before falling
+      vx: (Math.random() - 0.5) * 4,
+      vy: Math.random() * -3, 
       size: Math.random() * 3 + 1,
-      color: '255, 165, 0', // Orange RGB
+      color: '255, 165, 0', 
       alpha: 1
     });
   }
 };
 
-// --- Game Logic ---
+// --- Data Loading ---
 const loadVocabulary = async () => {
-  // Simplified for example; replace with your actual fetch logic
-  vocabulary.value = ['apple', 'banana', 'orange', 'grape'];
+  try {
+    const response = await fetch('/vocabulary-bank.csv');
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    
+    const csvText = await response.text();
+
+    Papa.parse(csvText, {
+      header: true, 
+      skipEmptyLines: true,
+      complete: (results) => {
+        const cleanWords = results.data
+          .map(row => {
+            const rawWord = row.word || row.Word || Object.values(row)[0];
+            return rawWord ? String(rawWord).trim() : '';
+          })
+          .filter(word => word.length > 0);
+
+        vocabulary.value = cleanWords;
+      },
+      error: (error) => fallbackVocabulary()
+    });
+  } catch (error) {
+    fallbackVocabulary();
+  }
 };
 
-const startGame = async () => {
-  await loadVocabulary();
+const fallbackVocabulary = () => {
+  vocabulary.value = ['apple', 'banana', 'orange', 'grape', 'answer', 'choose', 'compare'];
+};
+
+// --- Audio Logic ---
+const speakWord = (word) => {
+  if (!word) return;
+  // Cancel any stuck speech
+  window.speechSynthesis.cancel();
+  // Use a global variable to prevent the browser from deleting the speech object
+  window.globalUtterance = new SpeechSynthesisUtterance(word);
+  window.globalUtterance.volume = 1; 
+  window.speechSynthesis.speak(window.globalUtterance);
+};
+
+const playApplause = () => {
+  const audio = new Audio('/applause.mp3'); 
+  audio.volume = 0.5; 
+  audio.play().catch(() => {});
+  setTimeout(() => { audio.pause(); audio.currentTime = 0; }, 3000);
+};
+
+const playMoo = () => {
+  const audio = new Audio('/moo.wav');
+  audio.volume = 0.6; 
+  audio.play().catch(() => {});
+  setTimeout(() => { audio.pause(); audio.currentTime = 0; }, 3000);
+};
+
+// --- Game Logic ---
+const startGame = () => {
+  window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
   isPlaying.value = true;
+  
+  // Reset the list index and state to the very beginning
+  currentListIndex.value = 0;
+  isRecommendedWord.value = false;
+  nextWordToPlay.value = vocabulary.value[currentListIndex.value];
+  
   nextWord();
 };
 
@@ -143,62 +201,111 @@ const nextWord = async () => {
   showSuccess.value = false;
   showFailure.value = false;
 
-  const randomIndex = Math.floor(Math.random() * vocabulary.value.length);
-  currentWord.value = vocabulary.value[randomIndex];
-  definition.value = "A sample definition for the word."; 
+  if (vocabulary.value.length === 0) fallbackVocabulary();
+
+  // Pull the word that was prepared by startGame or checkSpelling
+  currentWord.value = nextWordToPlay.value;
   
+  // (The definition line that crashed the app has been removed!)
+  
+  // Now this will successfully run!
   speakWord(currentWord.value);
-  // Re-focus input after resetting
-  setTimeout(() => wordInput.value && wordInput.value.focus(), 100);
-};
 
-const speakWord = (word) => {
-  const utterance = new SpeechSynthesisUtterance(word);
-  window.speechSynthesis.speak(utterance);
-};
-
-const playApplause = () => {
-  const audio = new Audio('/applause.mp3'); 
-  audio.volume = 0.5; 
-  
-  audio.play().catch(e => console.log("Audio play blocked by browser:", e));
-
-  // Stop the audio after 3000 milliseconds (3 seconds)
-  setTimeout(() => {
-    audio.pause();           // Stop the playback
-    audio.currentTime = 0;   // Rewind back to the very beginning
-  }, 3000);
-};
-
-const playMoo = () => {
-  const audio = new Audio('/moo.wav');
-  audio.volume = 0.6; 
-  
-  audio.play().catch(e => console.log("Audio play blocked by browser:", e));
-
-  // Stop the audio after 3000 milliseconds (3 seconds)
-  setTimeout(() => {
-    audio.pause();           // Stop the playback
-    audio.currentTime = 0;   // Rewind back to the very beginning
-  }, 3000);
+  await nextTick();
+  if (wordInput.value) {
+    wordInput.value.focus();
+  }
 };
 
 const checkSpelling = () => {
   if (!userInput.value) return;
   isAnimating.value = true; 
 
-  if (userInput.value.toLowerCase().trim() === currentWord.value.toLowerCase()) {
-    // Correct Answer
+  // KEEP AWAKE TRICK: Triggers instantly
+  window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+
+  const userSpelled = userInput.value.toLowerCase().trim();
+  const targetWord = currentWord.value.toLowerCase();
+
+  if (userSpelled === targetWord) {
     showSuccess.value = true;
-    playApplause(); // Play the applause sound
+    playApplause(); 
+
+    if (!isRecommendedWord.value) {
+      currentListIndex.value++;
+      
+      if (currentListIndex.value >= vocabulary.value.length) {
+        currentListIndex.value = 0;
+      }
+    }
     
+    isRecommendedWord.value = false;
+    nextWordToPlay.value = vocabulary.value[currentListIndex.value];
+
+    // Starts countdown instantly
     setTimeout(nextWord, 3000);
   } else {
-    // Wrong Answer
     showFailure.value = true;
-    playMoo(); // Play the cow moo sound
-    
+    playMoo(); 
+
+    // 1. Start the 5-second countdown IMMEDIATELY to save the auto-play
     setTimeout(nextWord, 5000); 
+
+    // 2. Fetch the recommendation in the background WITHOUT pausing the function
+    fetchRecommendation(targetWord, userSpelled).then((recommendation) => {
+      // Once Azure replies (usually in ~0.5 seconds), update the variables
+      // silently before the 5-second timer finishes!
+      nextWordToPlay.value = recommendation;
+      isRecommendedWord.value = true;
+    });
+  }
+};
+
+const fetchRecommendation = async (correctWord, incorrectWord) => {
+  // 1. Point to your local Azure Function proxy
+  const url = 'http://localhost:7071/api/predict';
+
+  const data = {
+    requests: [
+      {
+        correct_word: correctWord,
+        incorrect_word: incorrectWord
+      }
+    ]
+  };
+
+  try {
+    // 2. Notice there is no Authorization header here anymore!
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(data)
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const result = await response.json();
+    const recommendations = result.results[0].top_3_recommendations;
+
+    // 3. Your original filtering logic remains completely intact
+    let chosenWord = recommendations[0].word; 
+    for (let rec of recommendations) {
+      if (rec.word !== currentWord.value && rec.word !== vocabulary.value[currentListIndex.value]) {
+        chosenWord = rec.word;
+        break;
+      }
+    }
+    
+    return chosenWord;
+  } catch (error) {
+    console.error("Failed to fetch recommendation, falling back to list:", error);
+    // If the network fails, gracefully fall back to the word they failed so they can retry
+    return vocabulary.value[currentListIndex.value];
   }
 };
 </script>
@@ -247,6 +354,11 @@ input {
   text-align: center;
   outline: none;
   transition: border-color 0.3s;
+  
+  /* --- New Width Properties --- */
+  width: 100%;
+  min-width: 550px; /* Gives plenty of room for the new placeholder */
+  max-width: 90vw;  /* Prevents it from breaking off the edge of smaller screens */
 }
 
 input:focus {
@@ -314,5 +426,127 @@ input:focus {
 @keyframes revealFire {
   0% { opacity: 0; transform: scale(0.5); }
   100% { opacity: 1; transform: scale(1); }
+}
+/* --- White Title with Orange Glow --- */
+h1 {
+  font-size: 4rem; 
+  color: #ffffff; 
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  text-shadow: 
+    0 0 10px #FF9800, 
+    0 0 20px #FF9800, 
+    0 0 40px #E65100; 
+  margin-top: 0;
+  margin-bottom: 60px; /* Makes the two titles sit nicely together */
+}
+/* --- Keep the big space below the SECOND title --- */
+h1:last-of-type {
+  margin-bottom: 120px; /* Pushes the buttons and input box down */
+}
+/* --- Shared Base for Cartoon Buttons --- */
+.start-btn, .audio-btn {
+  font-size: 2rem;
+  font-weight: 900;
+  font-family: 'Comic Sans MS', 'Chalkboard SE', 'Marker Felt', sans-serif;
+  padding: 20px 50px; 
+  border-radius: 50px; 
+  border: 4px solid #ffffff; 
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  outline: none;
+  transition: all 0.1s ease-in-out;
+}
+
+/* --- Start Game Button (Green Theme) --- */
+.start-btn {
+  background-color: #4CAF50; /* Bright playful green */
+  color: #ffffff;
+  box-shadow: 0 10px 0 #2E7D32; /* Dark green 3D shadow */
+}
+
+.start-btn:hover {
+  background-color: #66BB6A; /* Lighter green on hover */
+}
+
+.start-btn:active {
+  transform: translateY(10px); 
+  box-shadow: 0 0 0 #2E7D32; 
+}
+
+/* --- Hear Word Button (Orange Theme) --- */
+.audio-btn {
+  background-color: #FF9800; /* Vibrant orange */
+  color: #ffffff;
+  box-shadow: 0 10px 0 #E65100; /* Dark orange 3D shadow */
+  /* Increased significantly to push the input box further down */
+  margin-bottom: 60px; 
+}
+
+.audio-btn:hover {
+  background-color: #FFA726; 
+}
+
+.audio-btn:active {
+  transform: translateY(10px); 
+  box-shadow: 0 0 0 #E65100; 
+}
+
+/* --- White Input Box with Orange Glow --- */
+input {
+  background: #1a1a1a; 
+  border: 4px solid #ffffff; 
+  color: #ffffff; 
+  padding: 20px 30px;
+  font-size: 2.5rem;
+  border-radius: 25px; 
+  text-align: center;
+  outline: none;
+  transition: all 0.3s ease;
+  
+  /* --- Widened Box --- */
+  width: 100%;
+  min-width: 750px; /* Increased from 550px to fit the new placeholder */
+  max-width: 90vw;  /* Keeps it from breaking mobile screens */
+  
+  box-shadow: 0 0 15px #FF9800; 
+}
+
+input:focus {
+  box-shadow: 0 0 25px #FF9800, 0 0 40px #E65100; 
+  border-color: #FFB74D; 
+}
+
+input::placeholder {
+  color: #a0a0a0; 
+}
+/* --- Shared Base for Cartoon Buttons --- */
+.start-btn, .audio-btn {
+  font-size: 2rem;
+  font-weight: 900;
+  font-family: 'Comic Sans MS', 'Chalkboard SE', 'Marker Felt', sans-serif;
+  padding: 20px 50px; 
+  border-radius: 50px; 
+  border: 4px solid #ffffff; 
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  outline: none;
+  transition: all 0.1s ease-in-out;
+  
+  /* --- NEW: Flexbox alignment for the icon --- */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px; /* Adds perfect spacing between the icon and the text */
+}
+
+/* --- NEW: Icon Styling --- */
+.btn-icon {
+  width: 65px; /* Adjust this number to make the icon bigger or smaller */
+  height: auto;
+  /* Optional: If your PNG is black and you want it to be white to match the text, uncomment the next line */
+  /* filter: invert(100%); */ 
 }
 </style>
