@@ -2,31 +2,36 @@
 
 ## 📚 Project Overview
 
-SpellSpark is an innovative Machine Learning-powered application designed to help children practice spelling more effectively. Unlike traditional rule-based spell checkers, SpellSpark uses a dual-model neural network architecture to:
+SpellSpark is a Machine Learning–powered spelling practice system designed to help children strengthen their spelling skills by learning underlying error patterns rather than memorizing isolated corrections.
 
-1. **Classify spelling errors** by their underlying type (e.g., phonetic substitution, double-letter drops)
-2. **Predict error patterns** for new vocabulary words
-3. **Recommend similar words** that share the same spelling challenges
+The system uses a **teacher–student dual‑model architecture** that:
 
-This dynamic approach shifts the paradigm from memorizing isolated instances to practicing and mastering underlying spelling patterns.
+1. Classifies spelling error types
+2. Generates compact numerical embeddings representing each mistake
+3. Predicts similar error‑prone patterns for unseen words
+4. Recommends practice words based on embedding similarity
+
+This allows children to practice words that share similar spelling challenges, promoting pattern‑based learning.
 
 ---
 
 ## 🎯 The Problem & Solution
 
 ### The Challenge
-Research shows that children make distinct types of spelling errors at different developmental stages (Niolaki et al., 2023). Current state-of-the-art tools like KidSpell rely on programmed, rule-based algorithms that:
-- Require manual hard-coding for every possible mistake
-- Cannot generalize across vocabulary
-- Fail to understand complex semantic and phonetic errors
-- Cannot learn from real-world user data
+Research shows that children tend to make predictable categories of spelling errors at different developmental stages. Traditional rule‑based tools struggle because they:
+
+- Require manual rule creation
+- Cannot generalize to new vocabulary
+- Perform poorly on phonetic or semantic errors
+- Do not learn from children’s mistakes
 
 ### Our Solution
-SpellSpark replaces static rules with **machine learning-driven intelligence**:
-- Learns from both error pairs and structural patterns in correct words
-- Automatically discovers and adapts to spelling error categories
-- Provides intelligent recommendations for personalized practice
-- Enables continuous improvement through real-world user feedback
+SpellSpark replaces rules with machine-learned representations:
+
+- The **Teacher Model** learns real mistake patterns
+- The **Student Model** predicts mistake‑like embeddings for new words
+- The system recommends similar words through embedding similarity
+- The curriculum continuously improves as new user mistakes are collected
 
 ---
 
@@ -35,47 +40,50 @@ SpellSpark replaces static rules with **machine learning-driven intelligence**:
 ### High-Level Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     SpellSpark System                           │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
+┌────────────────────────────────────────────────────────────────┐
+│                     SpellSpark System                          │
+├────────────────────────────────────────────────────────────────┤
+│                                                                │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │           Vue.js Frontend (UI Layer)                    │   │
-│  │  - Interactive spelling game with visual feedback       │   │
+│  │  - Interactive spelling game                            │   │
 │  │  - Audio pronunciation support                          │   │
-│  │  - Real-time particle animations                        │   │
+│  │  - Visual feedback animations                           │   │
 │  └──────────────────────┬──────────────────────────────────┘   │
-│                         │                                        │
+│                         │                                      │
 │  ┌──────────────────────▼──────────────────────────────────┐   │
-│  │      Backend API (Flask/Python)                         │   │
-│  │  - Processes user spelling submissions                  │   │
-│  │  - Interfaces with ML models                            │   │
-│  │  - Generates recommendations                            │   │
+│  │      Backend API (Azure Function Proxy)                 │   │
+│  │ - Forwards requests to Teacher Model endpoint           │   │
+│  │ - Returns responses to UI                               │   │
 │  └──────────────────────┬──────────────────────────────────┘   │
-│                         │                                        │
+│                         │                                      │
 │  ┌──────────────────────▼──────────────────────────────────┐   │
 │  │           ML Model Pipeline                             │   │
 │  │  ┌──────────────────────────────────────────────────┐   │   │
-│  │  │ Model 1: Character-Level BiLSTM                 │   │   │
-│  │  │ (Error Classifier)                              │   │   │
-│  │  │ Input: (correct_word, misspelling) pairs        │   │   │
-│  │  │ Output: Error Profile (probability distribution)│   │   │
+│  │  │          Teacher Model (BiLSTM)                  │   │   |
+│  │  |  Input: (correct_word, misspelled_word)          │   │   │
+│  |  |  Outputs:                                        │   │   │
+│  |  |     1. Error Type (argmax of softmax)            │   │   │
+│  |  |     2. 64‑dimensional mistake embedding          │   │   │
 │  │  └──────────────────────────────────────────────────┘   │   │
-│  │                       │                                  │   │
-│  │  ┌────────────────────▼──────────────────────────────┐  │   │
-│  │  │ Model 2: Character-Level CNN                     │  │   │
-│  │  │ (Error Predictor)                                │  │   │
-│  │  │ Input: correct_word only                         │  │   │
-│  │  │ Output: Predicted Error Profile                  │  │   │
-│  │  └──────────────────────────────────────────────────┘  │   │
-│  │                       │                                  │   │
-│  │  ┌────────────────────▼──────────────────────────────┐  │   │
-│  │  │ Vocabulary Bank Database                         │  │   │
-│  │  │ (Pre-computed Error Profiles for all words)      │  │   │
-│  │  └──────────────────────────────────────────────────┘  │   │
+│  │                       │                                 │   │
+│  │  ┌────────────────────▼─────────────────────────────┐   │   │
+│  │  │          Curriculum Embedding Store              │   │   │
+│  |  |   - Precomputed 64‑dim embeddings for            |   |   |
+|  |  |     curriculum words                             │   │   │
+│  |  |   - Used for similarity search during inference  │   │   │
+│  │  └────────────────────▲─────────────────────────────┘   │   │
+│  │                       │                                 │   │
+│  │  ┌──────────────────────────────────────────────────┐   │   │
+│  │  │          Student Model (CNN)                     │   │   │
+│  │  |   Input: correct_word                            │   │   │
+│  |  |   Output: 64‑dim embedding (teacher‑aligned)     │   │   │
+│  │  |   Used only for batch‑generation of curriculum   │   │   │
+│  │  |   embeddings during offline training             │   │   │
+│  │  └──────────────────────────────────────────────────┘   │   │
 │  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -84,13 +92,19 @@ SpellSpark replaces static rules with **machine learning-driven intelligence**:
 
 ### Model 1: Character-Level BiLSTM (Error Classifier)
 
-**Purpose**: Classify the type of spelling error given a correct-misspelled word pair.
+**Purpose**: Given a pair (correct_word, misspelled_word), the teacher model produces:
+- Error Type Classification
+         - The softmax layer produces probabilities over error classes; the predicted error type is the argmax.
 
+- 64‑Dimensional Mistake Embedding
+         - The activated weights from the final hidden layer form a dense representation of the mistake pattern.
+         - This embedding is used directly in similarity search.
+ 
 **Architecture**:
-- **Input Layer**: Character-level encoding of (correct_word, misspelled_word) pairs
-- **BiLSTM Layers**: Bidirectional Long Short-Term Memory networks capture context in both directions
-- **Hidden Layer**: Last hidden layer serves as a rich latent representation (embedding) of the error pattern
-- **Output Layer**: Softmax classifier over multiple error type categories
+- Character‑level encoding of both words
+- Bidirectional LSTM layers
+- Final hidden layer → 64‑dim embedding
+- Softmax classifier in parallel for error type
 
 **Why BiLSTM?**
 - Captures sequential character dependencies in both forward and backward directions
@@ -98,144 +112,81 @@ SpellSpark replaces static rules with **machine learning-driven intelligence**:
 - Generates meaningful embeddings that cluster similar error types together in vector space
 - Outperforms rule-based systems on complex errors like phonetic substitutions
 
-**Key Outputs**:
-1. **Error Profile**: A probability distribution over error classes (e.g., 50% Double Letter Drop, 30% Phonetic Substitution, 20% Vowel Substitution)
-2. **Embeddings**: Latent representations from the last hidden layer used for similarity comparison
-
 **Training Data**:
-- 1,361 (correct, misspelled) pairs from children's essays (KidSpell dataset)
-- 2,455 misspellings from Wikipedia common misspellings corpus
-- Automatically labeled with error types using edit distance and rule-based heuristics
-
-**Performance** (Proof of Concept):
-- Accuracy: 70% (learning from scratch without hand-engineered features)
-- Successfully distinguishes between structural errors (missing letters) and complex errors (phonetic substitutions)
+- Children’s essay spelling mistakes
+- Common English misspellings
+- Automatically labeled error categories
 
 ---
 
-### Model 2: Character-Level CNN (Error Predictor)
+### Model 2: Student Model (Character‑Level CNN)
 
-**Purpose**: Predict the likely error profile for any correctly spelled word, enabling recommendations for unseen vocabulary.
+**Purpose**: Predict a **64‑dimensional embedding** for any correct word that mimics the teacher model’s embedding space.
 
 **Architecture**:
-- **Input Layer**: Character-level encoding of the correct word
-- **Convolutional Layers**: Multiple parallel filters act as n-gram detectors to identify tricky patterns (double consonants, vowel clusters, etc.)
-- **Pooling Layers**: Extract the most salient features from each n-gram window
-- **Dense Layers**: Map learned patterns to error profiles
-- **Output Layer**: Predicts a continuous probability distribution (error profile) for each word
+- Input: correct word
+- Convolution layer with 64 filters and kernel sizes [2, 3, 4]
+- Max pooling
+- Dense layers
+- Output: 64‑dimensional embedding
 
 **Why Character-Level CNN?**
 - Convolutional filters naturally detect local patterns and character subsequences
 - Efficient n-gram detection without manual feature engineering
-- Can be trained to predict continuous probability distributions (not just discrete classes)
 - Significantly outperforms rule-based approaches on generalization tasks
 
-**Key Outputs**:
-- **Predicted Error Profile**: A probability distribution over error types for any vocabulary word
-- **Similarity Scores**: Used to rank and recommend words with matching error patterns
-
-**Training Data**:
-- Correct words from the KidSpell and Wikipedia datasets
-- Target labels: Error profiles generated by Model 1
-- Enables Model 2 to learn how structural patterns in words predict their vulnerability to specific error types
-
-**Performance** (Proof of Concept):
-- Average Cosine Similarity: 0.67 (vs. 0.49 for KNN baseline)
-- Successfully generalizes error patterns to unseen vocabulary words
-- Captures nuanced relationships between word structure and error susceptibility
+**Role in System**
+- Used offline
+- Performs batch inference over the curriculum word list
+- Stores embeddings in the Curriculum Embedding Store
+- Does not interact with the Teacher Model directly
 
 ---
 
-### Performance Comparison: Neural Networks vs. Rule-Based Baseline
+## 🔄 Workflow
 
-| Aspect | KNN Baseline | BiLSTM (Model 1) | CNN (Model 2) |
-|--------|-------------|------------------|---------------|
-| **Model 1 Accuracy** | 90.6% | 70% | - |
-| **Model 2 F1-Score** | Lower across classes | - | Higher across classes |
-| **Error Profile Cosine Similarity** | 0.49 | - | 0.67 |
-| **Handles Phonetic Errors** | ❌ Struggles | ✅ Learns naturally | ✅ Learns patterns |
-| **Generalizes to New Words** | ❌ Limited | - | ✅ Excellent |
-| **Interpretability** | ✅ Highly transparent | ⚠️ Black-box | ⚠️ Black-box |
-| **Data Efficiency** | ✅ Works with small data | ⚠️ Requires more data | ⚠️ Requires more data |
-
-**Key Insight**: While KNN achieves 90.6% accuracy through hand-crafted features that "cheat" on structural errors, neural networks excel at understanding complex patterns and generalizing to unseen vocabulary—which is essential for SpellSpark's real-world mission.
-
----
-
-## 🔄 End-to-End Workflow
-
-### Phase 1: Training (Offline, One-time Setup)
+### Offline Training Pipeline
 
 ```
-Raw Datasets (KidSpell, Wikipedia)
+Teacher Model trains on labeled (correct, misspelled) pairs
          │
          ▼
-Error Classification (Edit Distance + Rules)
+Teacher generates embeddings for all correct words
          │
          ▼
-(Correct, Misspelled, Error_Type) Training Data
+Student Model trains to mimic teacher embeddings
          │
-         ├─────────────────────────────────────┐
-         │                                     │
-         ▼                                     │
-Train Model 1: BiLSTM                         │
-         │                                     │
-         ▼                                     │
-Generate Error Profiles via Model 1           │
-(for all correct words in training data)      │
-         │                                     │
-         ├─────────────────────────────────────┘
+         ▼                          
+Student Model performs batch inference on curriculum words
          │
-         ▼
-(Correct_Word, Error_Profile) Training Data
-         │
-         ▼
-Train Model 2: CNN
-         │
-         ▼
-Generate Vocabulary Bank
-(Each word paired with predicted error profiles)
+         ▼  
+Store 64‑dim curriculum embeddings in the embedding store
 ```
 
-### Phase 2: Inference (Runtime, Per User Interaction)
+### Runtime Inference (User Interaction)
 
 ```
-User Input: Spelling Attempt
-         │
-         ├─ (Correct Word, User Misspelling)
+User submits: (correct_word, misspelled_word)
          │
          ▼
-Model 1 (BiLSTM) Inference
+Azure Function Proxy
          │
          ▼
-Error Profile (user's current mistake type)
-         │
-         ├─ Query Vocabulary Bank
-         │
-         ▼
-Rank words by profile similarity (cosine distance)
+Teacher Model
+Outputs:
+- error type
+- 64‑dim mistake embedding
          │
          ▼
-Return Top-K Similar Words for Practice
+Similarity search against curriculum embedding store
          │
          ▼
-Display recommendations to user
-```
-
-### Phase 3: Continuous Learning (MLOps Feedback Loop)
-
-```
-Every User Interaction:
+Return top‑k similar curriculum words
          │
-         ├─ Capture (correct_word, misspelling) pair
-         │
-         ├─ Store in training buffer
-         │
-         ├─ (Optional) Trigger retraining pipeline when buffer reaches threshold
-         │
-         └─ Update Model 1 and regenerate Vocabulary Bank
-         
-Result: Models continuously improve as they learn from real children's mistakes
+         ▼
+UI behavior:
+- Suggest the top-ranked similar word
+- If the correct_word is NOT in top‑k: Save (correct_word, misspelled_word) as new training data for future improvements
 ```
 
 ---
@@ -246,76 +197,12 @@ Result: Models continuously improve as they learn from real children's mistakes
 
 **Location**: `spell-spark-ui/`
 
-### Key Components:
-
-1. **Game Interface**
-   - Interactive spelling practice in a gamified environment
-   - Audio pronunciation support using Web Speech API
-   - Real-time visual feedback through particle animations
-
-2. **User Interaction Flow**
-   - Display word definition
-   - Play audio pronunciation
-   - User types spelling attempt
-   - Submit via Enter key
-   - Visual feedback:
-     - ✅ Correct: Glowing fire animation + applause sound
-     - ❌ Incorrect: Smoke fade animation + error sound
-
-3. **Particle System**
-   - Canvas-based animated particles spawn when user types
-   - Creates engaging visual feedback and encourages interaction
-   - Performance-optimized with requestAnimationFrame
-
 ### Features:
-- Dark theme optimized for children
-- Responsive design
-- Accessibility: Text-to-speech for pronunciations
-- Sound effects for positive/negative reinforcement
-
----
-
-## 🔗 Backend API Layer
-
-**Technology**: Python with Flask (or equivalent)
-
-**Responsibilities**:
-
-1. **Model Serving**
-   - Load pre-trained Model 1 (BiLSTM) and Model 2 (CNN)
-   - Provide inference endpoints for error classification and recommendation
-
-2. **Request Handling**
-   ```
-   POST /api/check-spelling
-   {
-     "correct_word": "necessary",
-     "user_misspelling": "necassary"
-   }
-   
-   Response:
-   {
-     "error_profile": {
-       "double_letter_drop": 0.75,
-       "vowel_substitution": 0.15,
-       "consonant_substitution": 0.10
-     },
-     "recommended_words": [
-       "Mississippi",
-       "accommodate",
-       "possess",
-       ...
-     ]
-   }
-   ```
-
-3. **Data Collection & Logging**
-   - Record every user interaction for MLOps pipeline
-   - Maintain audit trail for model improvement
-
-4. **Vocabulary Management**
-   - Serve curated vocabulary bank
-   - Return word definitions and pronunciation guidance
+- Gamified spelling practice
+- Audio pronunciation
+- Interactive particle system
+- Dark theme
+- Immediate positive/negative feedback
 
 ---
 
@@ -348,85 +235,6 @@ Based on analysis of children's spelling patterns:
 
 ---
 
-## 🚀 Getting Started
-
-### Prerequisites
-- Node.js >= 22.18.0
-- Python 3.8+
-- pip package manager
-
-### Frontend Setup
-
-```bash
-cd spell-spark-ui
-npm install
-npm run dev              # Development server
-npm run build            # Production build
-```
-
-### Backend Setup (Placeholder)
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Start API server
-python app.py
-
-# The API should run on http://localhost:5000
-```
-
-### Running the Application
-
-1. Start the backend API
-2. Start the Vue development server
-3. Open browser to `http://localhost:5173` (or configured Vite port)
-4. Click "Start Game" to begin practicing
-
----
-
-## 📈 Expected Performance Improvements
-
-### From POC to Production
-
-The current proof-of-concept has not undergone hyperparameter tuning or architecture optimization. Expected improvements:
-
-- **Model 1 (BiLSTM)**
-  - Current: 70% accuracy
-  - Expected with tuning: Closer to 80-85% (narrowing gap to KNN baseline)
-  - Reason: Better optimization and more focused error classification
-
-- **Model 2 (CNN)**
-  - Current: 0.67 cosine similarity on error profiles
-  - Expected with tuning: 0.75+ cosine similarity
-  - Reason: Improved generalization to unseen vocabulary words
-
----
-
-## 🔮 Future Roadmap
-
-1. **Model Enhancements**
-   - Hyperparameter optimization and architecture search
-   - Integration of transfer learning from pre-trained language models
-   - Multi-language support
-
-2. **Personalization**
-   - User-specific difficulty levels
-   - Adaptive recommendation based on user history
-   - Learning progress tracking
-
-3. **Analytics & Insights**
-   - Dashboard for educators to track class progress
-   - Detailed error pattern analysis per student
-   - Identify emerging error types in real-time
-
-4. **Continuous Learning**
-   - Automated retraining pipeline
-   - A/B testing for model improvements
-   - User feedback integration
-
----
-
 ## 📚 References
 
 - Niolaki, S., et al. (2023). "Developmental differences in spelling error patterns." *Journal of Learning Disabilities*.
@@ -435,36 +243,4 @@ The current proof-of-concept has not undergone hyperparameter tuning or architec
 
 ---
 
-## 👥 Project Team
-
-Developed as a machine learning project focused on educational technology and AI for social good.
-
----
-
-## 📄 License
-
-[Add your license information here]
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please refer to the main project documentation for guidelines on:
-- Adding new error type categories
-- Improving model architecture
-- Expanding vocabulary bank
-- Enhancing UI/UX
-
----
-
-## 📝 Updates
-
-| Date | Update |
-|------|--------|
-| August 06, 2026 | Changed the number of training epochs to 50 to improve Model 1 performance; weighted avg macro F1 increased to 0.675. |
-| August 06, 2026 | Modified data preprocessing for Model 1 so that all sequences are padded to the same length (max length = 55; informed by the length of the training/vocab data). The same max padding length is applied to all inputs during inference to ensure consistent and stable predictions. |
-| August 04, 2026 | Switched to using the activated values from the last hidden layer (dim = 64) of Model 1 (BiLSTM) as the "error profiles" instead of the softmax label probabilities. |
-
----
-
-**Last Updated**: 2026-08-06
+**Last Updated**: 2026-08-12
